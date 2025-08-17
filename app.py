@@ -31,14 +31,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Optional image conversion
+
 try:
     from PIL import Image
     PIL_AVAILABLE = True
 except Exception:
     PIL_AVAILABLE = False
 
-# LangChain / LLM imports (keep as you used)
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
@@ -86,11 +85,6 @@ def parse_keys_and_types(raw_questions: str):
 
 
 
-
-# -----------------------------
-# Tools
-# -----------------------------
-
 @tool
 def scrape_url_to_dataframe(url: str) -> Dict[str, Any]:
     """
@@ -117,19 +111,15 @@ def scrape_url_to_dataframe(url: str) -> Dict[str, Any]:
 
         df = None
 
-        # --- CSV ---
         if "text/csv" in ctype or url.lower().endswith(".csv"):
             df = pd.read_csv(BytesIO(resp.content))
 
-        # --- Excel ---
         elif any(url.lower().endswith(ext) for ext in (".xls", ".xlsx")) or "spreadsheetml" in ctype:
             df = pd.read_excel(BytesIO(resp.content))
 
-        # --- Parquet ---
         elif url.lower().endswith(".parquet"):
             df = pd.read_parquet(BytesIO(resp.content))
 
-        # --- JSON ---
         elif "application/json" in ctype or url.lower().endswith(".json"):
             try:
                 data = resp.json()
@@ -137,7 +127,6 @@ def scrape_url_to_dataframe(url: str) -> Dict[str, Any]:
             except Exception:
                 df = pd.DataFrame([{"text": resp.text}])
 
-        # --- HTML / Fallback ---
         elif "text/html" in ctype or re.search(r'/wiki/|\.org|\.com', url, re.IGNORECASE):
             html_content = resp.text
             # Try HTML tables first
@@ -148,17 +137,17 @@ def scrape_url_to_dataframe(url: str) -> Dict[str, Any]:
             except ValueError:
                 pass
 
-            # If no table found, fallback to plain text
+            
             if df is None:
                 soup = BeautifulSoup(html_content, "html.parser")
                 text = soup.get_text(separator="\n", strip=True)
                 df = pd.DataFrame({"text": [text]})
 
-        # --- Unknown type fallback ---
+       
         else:
             df = pd.DataFrame({"text": [resp.text]})
 
-        # --- Normalize columns ---
+       
         df.columns = df.columns.map(str).str.replace(r'\[.*\]', '', regex=True).str.strip()
 
         return {
@@ -171,9 +160,6 @@ def scrape_url_to_dataframe(url: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-# -----------------------------
-# Utilities for executing code safely
-# -----------------------------
 def clean_llm_output(output: str) -> Dict:
     """
     Extract JSON object from LLM output robustly.
@@ -182,10 +168,8 @@ def clean_llm_output(output: str) -> Dict:
     try:
         if not output:
             return {"error": "Empty LLM output"}
-        # remove triple-fence markers if present
         s = re.sub(r"^```(?:json)?\s*", "", output.strip())
         s = re.sub(r"\s*```$", "", s)
-        # find outermost JSON object by scanning for balanced braces
         first = s.find("{")
         last = s.rfind("}")
         if first == -1 or last == -1 or last <= first:
@@ -194,7 +178,6 @@ def clean_llm_output(output: str) -> Dict:
         try:
             return json.loads(candidate)
         except Exception as e:
-            # fallback: try last balanced pair scanning backwards
             for i in range(last, first, -1):
                 cand = s[first:i+1]
                 try:
@@ -244,10 +227,9 @@ def scrape_url_to_dataframe(url: str) -> Dict[str, Any]:
             "columns": list(df.columns)
         }
     else:
-        # Fallback to plain text
+
         text_data = soup.get_text(separator="\n", strip=True)
 
-        # Try to detect possible "keys" from text like Runtime, Genre, etc.
         detected_cols = set(re.findall(r"\b[A-Z][a-zA-Z ]{2,15}\b", text_data))
         df = pd.DataFrame([{}])  # start empty
         for col in detected_cols:
@@ -274,7 +256,7 @@ def write_and_run_temp_python(code: str, injected_pickle: str = None, timeout: i
       - prints json.dumps({"status":"success","result":results})
     Returns dict with parsed JSON or error details.
     """
-    # create file content
+   
     preamble = [
         "import json, sys, gc",
         "import pandas as pd, numpy as np",
@@ -286,7 +268,7 @@ def write_and_run_temp_python(code: str, injected_pickle: str = None, timeout: i
     ]
     if PIL_AVAILABLE:
         preamble.append("from PIL import Image")
-    # inject df if a pickle path provided
+  
     if injected_pickle:
         preamble.append(f"df = pd.read_pickle(r'''{injected_pickle}''')\n")
         preamble.append("data = df.to_dict(orient='records')\n")
@@ -380,19 +362,17 @@ def plot_to_base64(max_bytes=100000):
             pass
 
 
-# -----------------------------
-# LLM agent setup
-# -----------------------------
+
 llm = ChatGoogleGenerativeAI(
     model=os.getenv("GOOGLE_MODEL", "gemini-2.5-pro"),
     temperature=0,
     google_api_key=os.getenv("GOOGLE_API_KEY")
 )
 
-# Tools list for agent (LangChain tool decorator returns metadata for the LLM)
+
 tools = [scrape_url_to_dataframe]  # we only expose scraping as a tool; agent will still produce code
 
-# Prompt: instruct agent to call the tool and output JSON only
+
 prompt = ChatPromptTemplate.from_messages([
     ("system", """You are a full-stack autonomous data analyst agent.
 
@@ -434,9 +414,6 @@ agent_executor = AgentExecutor(
 )
 
 
-# -----------------------------
-# Runner: orchestrates agent -> pre-scrape inject -> execute
-# -----------------------------
 def run_agent_safely(llm_input: str) -> Dict:
     """
     1. Run the agent_executor.invoke to get LLM output
@@ -464,27 +441,27 @@ def run_agent_safely(llm_input: str) -> Dict:
         urls = re.findall(r"scrape_url_to_dataframe\(\s*['\"](.*?)['\"]\s*\)", code)
         pickle_path = None
         if urls:
-            # For now support only the first URL (agent may code multiple scrapes; you can extend this)
+           
             url = urls[0]
             tool_resp = scrape_url_to_dataframe(url)
             if tool_resp.get("status") != "success":
                 return {"error": f"Scrape tool failed: {tool_resp.get('message')}"}
-            # create df and pickle it
+           
             df = pd.DataFrame(tool_resp["data"])
             temp_pkl = tempfile.NamedTemporaryFile(suffix=".pkl", delete=False)
             temp_pkl.close()
             df.to_pickle(temp_pkl.name)
             pickle_path = temp_pkl.name
-            # Make sure agent's code can reference df/data: we will inject the pickle loader in the temp script
+           
 
-        # Execute code in temp python script
+    
         exec_result = write_and_run_temp_python(code, injected_pickle=pickle_path, timeout=LLM_TIMEOUT_SECONDS)
         if exec_result.get("status") != "success":
             return {"error": f"Execution failed: {exec_result.get('message', exec_result)}", "raw": exec_result.get("raw")}
 
-        # exec_result['result'] should be results dict
+       
         results_dict = exec_result.get("result", {})
-        # Map to original questions (they asked to use exact question strings)
+     
         output = {}
         for q in questions:
             output[q] = results_dict.get(q, "Answer not found")
@@ -552,7 +529,6 @@ async def analyze_data(request: Request):
             else:
                 raise HTTPException(400, f"Unsupported data file type: {filename}")
 
-            # Pickle for injection
             temp_pkl = tempfile.NamedTemporaryFile(suffix=".pkl", delete=False)
             temp_pkl.close()
             df.to_pickle(temp_pkl.name)
@@ -564,7 +540,7 @@ async def analyze_data(request: Request):
                 f"First rows:\n{df.head(5).to_markdown(index=False)}\n"
             )
 
-        # Build rules based on data presence
+
         if dataset_uploaded:
             llm_rules = (
                 "Rules:\n"
@@ -592,7 +568,7 @@ async def analyze_data(request: Request):
             "Respond with the JSON object only."
         )
 
-        # Run agent
+
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as ex:
             fut = ex.submit(run_agent_safely_unified, llm_input, pickle_path)
@@ -604,7 +580,6 @@ async def analyze_data(request: Request):
         if "error" in result:
             raise HTTPException(500, detail=result["error"])
 
-        # Post-process key mapping & type casting
         if keys_list and type_map:
             mapped = {}
             for idx, q in enumerate(result.keys()):
@@ -687,7 +662,6 @@ def run_agent_safely_unified(llm_input: str, pickle_path: str = None) -> Dict:
 from fastapi.responses import FileResponse, Response
 import base64, os
 
-# 1×1 transparent PNG fallback (if favicon.ico file not present)
 _FAVICON_FALLBACK_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO3n+9QAAAAASUVORK5CYII="
 )
